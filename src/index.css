@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-serif:
+    "Source Serif 4", "Iowan Old Style", "Apple Garamond", "Palatino Linotype", Georgia, serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  background:
+    radial-gradient(circle at 10% 10%, rgba(255, 220, 180, 0.45), transparent 55%),
+    radial-gradient(circle at 90% 0%, rgba(180, 210, 255, 0.45), transparent 50%),
+    radial-gradient(circle at 50% 100%, rgba(220, 200, 255, 0.4), transparent 55%), #fafaf7;
+  color: #1f2937;
+  font-family: var(--font-sans);
+  transition:
+    background-color 250ms ease,
+    color 250ms ease;
+}
+
+html.dark body {
+  background:
+    radial-gradient(circle at 10% 10%, rgba(180, 120, 60, 0.18), transparent 55%),
+    radial-gradient(circle at 90% 0%, rgba(70, 110, 180, 0.18), transparent 50%),
+    radial-gradient(circle at 50% 100%, rgba(120, 90, 180, 0.18), transparent 55%), #0c0a09;
+  color: #e7e5e4;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary,
+  label[for],
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [role="button"][aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
+  /* Hide native number-input spinner arrows for a cleaner look. */
+  input[type="number"].no-spinner::-webkit-inner-spin-button,
+  input[type="number"].no-spinner::-webkit-outer-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+
+  input[type="number"].no-spinner {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+}
+
+.letter-body {
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
