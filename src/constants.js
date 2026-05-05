@@ -71,10 +71,32 @@ export const STORY_LIMITS = Object.freeze({
 export const DEFAULT_AUTHOR = "Anonymous";
 
 // ---------------------------------------------------------------------------
+// Moderation — must mirror backend `ModerationStatus`
+// ---------------------------------------------------------------------------
+export const MODERATION_STATUS = Object.freeze({
+  PENDING: "pending",
+  AUTO_APPROVED: "auto_approved",
+  AUTO_REJECTED: "auto_rejected",
+  NEEDS_REVIEW: "needs_review",
+  HUMAN_APPROVED: "human_approved",
+  HUMAN_REJECTED: "human_rejected",
+});
+
+// Crisis helpline shown to users whose submission is rejected — surfaced in
+// the rejection banner so anyone in active crisis still has a path to help.
+// US default; replace per locale.
+export const CRISIS_HELPLINE = Object.freeze({
+  label: "988 Suicide & Crisis Lifeline",
+  href: "https://988lifeline.org/",
+});
+
+// ---------------------------------------------------------------------------
 // Admin dashboard
 // ---------------------------------------------------------------------------
 export const ADMIN_STATUS_OPTIONS = Object.freeze([
   { id: "all", label: "All" },
-  { id: "pending", label: "Pending" },
+  { id: "pending", label: "Unapproved" },
+  { id: "needs_review", label: "Needs review" },
+  { id: "auto_rejected", label: "Auto-rejected" },
   { id: "approved", label: "Approved" },
 ]);

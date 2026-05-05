@@ -5,7 +5,12 @@ import StoryModal from "../components/StoryModal.jsx";
 import ThemeToggle from "../components/ThemeToggle.jsx";
 import { adminApi, AdminAuthError } from "../admin/api.js";
 import { clearAdminAuth } from "../admin/auth.js";
-import { ADMIN_PAGE_SIZE, ADMIN_STATUS_OPTIONS, ROUTES } from "../constants.js";
+import { ADMIN_PAGE_SIZE, ADMIN_STATUS_OPTIONS, MODERATION_STATUS, ROUTES } from "../constants.js";
+
+// Bulk "reject" only skips rows that a human already manually rejected — those
+// are truly idempotent. Auto-rejected rows are intentionally INCLUDED, because
+// flipping them from `auto_rejected` → `human_rejected` is a meaningful audit
+// event ("the human reviewed and agreed with the LLM"), not a no-op.
 
 function formatDate(value) {
   if (!value) return "";
@@ -22,17 +27,46 @@ function formatDate(value) {
   }
 }
 
-function StatusBadge({ approved }) {
-  if (approved) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
-        Approved
-      </span>
-    );
-  }
+// Style + label per moderation_status. Falls back to legacy approved/pending
+// for documents that pre-date the moderation pipeline.
+const BADGE_BY_STATUS = {
+  [MODERATION_STATUS.AUTO_APPROVED]: {
+    label: "Auto-approved",
+    cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
+  },
+  [MODERATION_STATUS.HUMAN_APPROVED]: {
+    label: "Approved",
+    cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
+  },
+  [MODERATION_STATUS.NEEDS_REVIEW]: {
+    label: "Needs review",
+    cls: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
+  },
+  [MODERATION_STATUS.AUTO_REJECTED]: {
+    label: "Auto-rejected",
+    cls: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
+  },
+  [MODERATION_STATUS.HUMAN_REJECTED]: {
+    label: "Rejected",
+    cls: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
+  },
+  [MODERATION_STATUS.PENDING]: {
+    label: "Pending",
+    cls: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
+  },
+};
+
+function StatusBadge({ story }) {
+  const explicit = story.moderation_status && BADGE_BY_STATUS[story.moderation_status];
+  const fallback = story.approved
+    ? BADGE_BY_STATUS[MODERATION_STATUS.HUMAN_APPROVED]
+    : BADGE_BY_STATUS[MODERATION_STATUS.PENDING];
+  const { label, cls } = explicit ?? fallback;
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
-      Pending
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}
+    >
+      {label}
     </span>
   );
 }
@@ -50,6 +84,7 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [activeStory, setActiveStory] = useState(null);
 
   useEffect(() => {
@@ -114,6 +149,71 @@ export default function AdminDashboard() {
   function handleLogout() {
     clearAdminAuth();
     navigate(ROUTES.ADMIN_LOGIN, { replace: true });
+  }
+
+  // Apply one of {approve, reject, delete} to every visible story on this
+  // page. Pre-filters to skip rows already in the target state so the count
+  // shown in the confirm dialog is meaningful. Uses Promise.allSettled so a
+  // single failure doesn't abort the rest.
+  async function runBulkAction(action) {
+    const targets = items.filter((s) => {
+      if (action === "approve") return s.moderation_status !== MODERATION_STATUS.HUMAN_APPROVED;
+      if (action === "reject") return s.moderation_status !== MODERATION_STATUS.HUMAN_REJECTED;
+      return true; // delete applies to everything
+    });
+
+    if (targets.length === 0) {
+      window.alert(
+        action === "approve"
+          ? "Nothing to approve on this page — every visible story is already approved."
+          : action === "reject"
+            ? "Nothing to reject on this page — every visible story is already rejected."
+            : "No stories on this page.",
+      );
+      return;
+    }
+
+    const verb = action === "delete" ? "permanently delete" : action;
+    const tail = action === "delete" ? " This cannot be undone." : "";
+    if (
+      !window.confirm(
+        `${verb[0].toUpperCase() + verb.slice(1)} ${targets.length} story(ies) on this page?${tail}`,
+      )
+    ) {
+      return;
+    }
+
+    setBulkBusy(true);
+    setError(null);
+    try {
+      const results = await Promise.allSettled(
+        targets.map((story) => {
+          if (action === "approve") return adminApi.setApproved(story._id, true);
+          if (action === "reject") return adminApi.setApproved(story._id, false);
+          return adminApi.deleteStory(story._id);
+        }),
+      );
+
+      const authError = results.find(
+        (r) => r.status === "rejected" && r.reason instanceof AdminAuthError,
+      );
+      if (authError) {
+        handleAuthError();
+        return;
+      }
+
+      const failed = results.filter((r) => r.status === "rejected");
+      if (failed.length > 0) {
+        setError(
+          `${failed.length} of ${targets.length} bulk operations failed. ` +
+            `First error: ${failed[0].reason?.message ?? "unknown"}`,
+        );
+      }
+
+      await load(page, appliedSearch, statusFilter);
+    } finally {
+      setBulkBusy(false);
+    }
   }
 
   async function runAction(story, action) {
@@ -225,20 +325,49 @@ export default function AdminDashboard() {
         </section>
 
         <section className="rounded-2xl border border-stone-200 bg-white/85 shadow-sm backdrop-blur dark:border-stone-700/70 dark:bg-stone-900/60">
-          <div className="flex items-center justify-between border-b border-stone-200 px-4 py-3 text-sm text-stone-600 dark:border-stone-700/70 dark:text-stone-400">
+          <div className="flex flex-col gap-3 border-b border-stone-200 px-4 py-3 text-sm text-stone-600 sm:flex-row sm:items-center sm:justify-between dark:border-stone-700/70 dark:text-stone-400">
             <span>
               {loading
                 ? "Loading…"
                 : `${total} result${total === 1 ? "" : "s"} · page ${page + 1} of ${pageCount}`}
             </span>
-            {appliedSearch && (
-              <span className="truncate">
-                Filter:{" "}
-                <span className="font-medium text-stone-900 dark:text-stone-100">
-                  “{appliedSearch}”
+            <div className="flex flex-wrap items-center gap-2">
+              {appliedSearch && (
+                <span className="truncate pr-2">
+                  Filter:{" "}
+                  <span className="font-medium text-stone-900 dark:text-stone-100">
+                    “{appliedSearch}”
+                  </span>
                 </span>
-              </span>
-            )}
+              )}
+              <button
+                type="button"
+                disabled={bulkBusy || loading || items.length === 0}
+                onClick={() => runBulkAction("approve")}
+                className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-500 dark:hover:bg-emerald-400"
+                title="Approve every story on this page that isn't already approved"
+              >
+                Approve all on page
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy || loading || items.length === 0}
+                onClick={() => runBulkAction("reject")}
+                className="rounded-full border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 shadow-sm hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-900/60 dark:bg-stone-800 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                title="Mark every story on this page as rejected (preserves the row for audit)"
+              >
+                Reject all on page
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy || loading || items.length === 0}
+                onClick={() => runBulkAction("delete")}
+                className="rounded-full border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-800 shadow-sm hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200 dark:hover:bg-rose-950/60"
+                title="Permanently delete every story on this page"
+              >
+                Delete all on page
+              </button>
+            </div>
           </div>
 
           {error && (
@@ -269,13 +398,18 @@ export default function AdminDashboard() {
                       >
                         {story.title}
                       </button>
-                      <StatusBadge approved={story.approved} />
+                      <StatusBadge story={story} />
                     </div>
                     <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                       — {story.author}
                       {story.age_at_attempt ? `, ${story.age_at_attempt} at the time` : ""}
                       {story.created_at ? ` · ${formatDate(story.created_at)}` : ""}
                     </p>
+                    {story.moderation_reason && (
+                      <p className="mt-1 text-xs italic text-stone-500 dark:text-stone-400">
+                        Moderator: {story.moderation_reason}
+                      </p>
+                    )}
                     <p className="mt-2 line-clamp-2 text-sm text-stone-600 dark:text-stone-400">
                       {story.message}
                     </p>

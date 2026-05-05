@@ -33,6 +33,16 @@ For a production build set `VITE_API_URL` to your deployed API origin:
 VITE_API_URL=https://api.example.com npm run build
 ```
 
+## Deploy targets
+
+The repo ships SPA-fallback configs so a fresh import on any of these hosts
+works out of the box (deep links like `/admin/login` resolve on hard refresh
+instead of 404'ing):
+
+- **Vercel** — picks up `vercel.json` automatically.
+- **Netlify** — picks up `netlify.toml`, plus a redundant `public/_redirects`.
+- **Cloudflare Pages / static hosts** — read `public/_redirects` from `dist/`.
+
 ## Project layout
 
 ```

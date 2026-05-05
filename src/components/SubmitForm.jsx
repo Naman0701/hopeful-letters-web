@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api.js";
-import { DEFAULT_AUTHOR, STORY_LIMITS } from "../constants.js";
+import { CRISIS_HELPLINE, DEFAULT_AUTHOR, MODERATION_STATUS, STORY_LIMITS } from "../constants.js";
 
 const initialState = {
   author: "",
@@ -9,9 +9,52 @@ const initialState = {
   message: "",
 };
 
+// Map a moderation_status from the API into a banner shown to the submitter.
+// Three buckets: published, queued for human review, rejected.
+function bannerFor(story) {
+  const status = story?.moderation_status;
+  const reason = story?.moderation_reason;
+
+  if (
+    status === MODERATION_STATUS.AUTO_APPROVED ||
+    status === MODERATION_STATUS.HUMAN_APPROVED ||
+    story?.approved
+  ) {
+    return {
+      tone: "success",
+      title: "Thank you. Your letter is now visible.",
+      body: "Refresh the home page to see it among the others.",
+    };
+  }
+
+  if (status === MODERATION_STATUS.AUTO_REJECTED) {
+    return {
+      tone: "error",
+      title: "Your letter wasn't accepted.",
+      body: reason ?? "It didn't meet our safe-messaging guidelines.",
+      showCrisisLine: true,
+    };
+  }
+
+  // needs_review, pending, or anything we don't recognize → safe default.
+  return {
+    tone: "info",
+    title: "Thank you. Your letter is being reviewed.",
+    body: "A moderator will take a look shortly. It will appear once approved.",
+  };
+}
+
+const BANNER_STYLES = {
+  success:
+    "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100",
+  info: "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100",
+  error:
+    "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-100",
+};
+
 export default function SubmitForm({ onSubmitted }) {
   const [form, setForm] = useState(initialState);
-  const [status, setStatus] = useState({ state: "idle", error: null });
+  const [status, setStatus] = useState({ state: "idle", error: null, result: null });
 
   function update(field) {
     return (event) => setForm((prev) => ({ ...prev, [field]: event.target.value }));
@@ -19,7 +62,7 @@ export default function SubmitForm({ onSubmitted }) {
 
   async function handleSubmit(event) {
     event.preventDefault();
-    setStatus({ state: "submitting", error: null });
+    setStatus({ state: "submitting", error: null, result: null });
     try {
       const payload = {
         author: form.author.trim() || DEFAULT_AUTHOR,
@@ -28,13 +71,15 @@ export default function SubmitForm({ onSubmitted }) {
         age_at_attempt: form.age_at_attempt ? Number(form.age_at_attempt) : null,
       };
       const created = await api.submitStory(payload);
-      setStatus({ state: "success", error: null });
+      setStatus({ state: "success", error: null, result: created });
       setForm(initialState);
       onSubmitted?.(created);
     } catch (error) {
-      setStatus({ state: "error", error: error.message });
+      setStatus({ state: "error", error: error.message, result: null });
     }
   }
+
+  const banner = status.state === "success" ? bannerFor(status.result) : null;
 
   const inputClass =
     "mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm shadow-sm " +
@@ -131,9 +176,24 @@ export default function SubmitForm({ onSubmitted }) {
             {status.error}
           </div>
         )}
-        {status.state === "success" && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100">
-            Thank you. Your letter was received and will appear after a quick review.
+        {banner && (
+          <div className={`rounded-lg border px-3 py-2 text-sm ${BANNER_STYLES[banner.tone]}`}>
+            <p className="font-medium">{banner.title}</p>
+            <p className="mt-1">{banner.body}</p>
+            {banner.showCrisisLine && (
+              <p className="mt-2">
+                If you're in crisis right now, please reach out:{" "}
+                <a
+                  href={CRISIS_HELPLINE.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-semibold underline underline-offset-2 hover:no-underline"
+                >
+                  {CRISIS_HELPLINE.label}
+                </a>
+                .
+              </p>
+            )}
           </div>
         )}
 
